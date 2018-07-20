@@ -3,6 +3,8 @@ package terraform
 import (
 	"fmt"
 
+	"github.com/hashicorp/terraform/plans"
+
 	"github.com/hashicorp/hcl2/hcl"
 
 	"github.com/hashicorp/terraform/addrs"
@@ -16,7 +18,7 @@ import (
 type EvalCheckPreventDestroy struct {
 	Addr   addrs.ResourceInstance
 	Config *configs.Resource
-	Diff   **InstanceDiff
+	Diff   **plans.ResourceInstanceChange
 }
 
 func (n *EvalCheckPreventDestroy) Eval(ctx EvalContext) (interface{}, error) {

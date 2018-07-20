@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/terraform/addrs"
 	"github.com/hashicorp/terraform/config"
 	"github.com/hashicorp/terraform/configs"
+	"github.com/hashicorp/terraform/plans"
+	"github.com/hashicorp/terraform/states"
 	"github.com/hashicorp/terraform/tfdiags"
 )
 
@@ -17,101 +19,90 @@ import (
 // the full diff.
 type EvalApply struct {
 	Addr      addrs.ResourceInstance
-	State     **InstanceState
-	Diff      **InstanceDiff
+	State     **states.ResourceInstanceObject
+	Diff      **plans.ResourceInstanceChange
 	Provider  *ResourceProvider
-	Output    **InstanceState
+	Output    **states.ResourceInstanceObject
 	CreateNew *bool
 	Error     *error
 }
 
 // TODO: test
 func (n *EvalApply) Eval(ctx EvalContext) (interface{}, error) {
-	diff := *n.Diff
-	provider := *n.Provider
-	state := *n.State
+	return nil, fmt.Errorf("EvalApply is not yet updated for the new state and plan types")
+	/*
+		diff := *n.Diff
+		provider := *n.Provider
+		state := *n.State
 
-	// The provider API still expects our legacy InstanceInfo type, so we must shim it.
-	legacyInfo := NewInstanceInfo(n.Addr.Absolute(ctx.Path()))
+		// The provider API still expects our legacy InstanceInfo type, so we must shim it.
+		legacyInfo := NewInstanceInfo(n.Addr.Absolute(ctx.Path()))
 
-	if diff.Empty() {
-		log.Printf("[DEBUG] apply %s: diff is empty, so skipping.", n.Addr)
+		if state == nil {
+			state = &states.ResourceInstanceObject{}
+		}
+
+		// Flag if we're creating a new instance
+		if n.CreateNew != nil {
+			*n.CreateNew = state.ID == "" && !diff.GetDestroy() || diff.RequiresNew()
+		}
+
+		// With the completed diff, apply!
+		log.Printf("[DEBUG] apply %s: executing Apply", n.Addr)
+		state, err := provider.Apply(legacyInfo, state, diff)
+		if state == nil {
+			state = new(InstanceState)
+		}
+		state.init()
+
+		// Force the "id" attribute to be our ID
+		if state.ID != "" {
+			state.Attributes["id"] = state.ID
+		}
+
+		// If the value is the unknown variable value, then it is an error.
+		// In this case we record the error and remove it from the state
+		for ak, av := range state.Attributes {
+			if av == config.UnknownVariableValue {
+				err = multierror.Append(err, fmt.Errorf(
+					"Attribute with unknown value: %s", ak))
+				delete(state.Attributes, ak)
+			}
+		}
+
+		// If the provider produced an InstanceState with an empty id then
+		// that really means that there's no state at all.
+		// FIXME: Change the provider protocol so that the provider itself returns
+		// a null in this case, and stop treating the ID as special.
+		if state.ID == "" {
+			state = nil
+		}
+
+		// Write the final state
+		if n.Output != nil {
+			*n.Output = state
+		}
+
+		// If there are no errors, then we append it to our output error
+		// if we have one, otherwise we just output it.
+		if err != nil {
+			if n.Error != nil {
+				helpfulErr := fmt.Errorf("%s: %s", n.Addr, err.Error())
+				*n.Error = multierror.Append(*n.Error, helpfulErr)
+			} else {
+				return nil, err
+			}
+		}
+
 		return nil, nil
-	}
-
-	// Remove any output values from the diff
-	for k, ad := range diff.CopyAttributes() {
-		if ad.Type == DiffAttrOutput {
-			diff.DelAttribute(k)
-		}
-	}
-
-	// If the state is nil, make it non-nil
-	if state == nil {
-		state = new(InstanceState)
-	}
-	state.init()
-
-	// Flag if we're creating a new instance
-	if n.CreateNew != nil {
-		*n.CreateNew = state.ID == "" && !diff.GetDestroy() || diff.RequiresNew()
-	}
-
-	// With the completed diff, apply!
-	log.Printf("[DEBUG] apply %s: executing Apply", n.Addr)
-	state, err := provider.Apply(legacyInfo, state, diff)
-	if state == nil {
-		state = new(InstanceState)
-	}
-	state.init()
-
-	// Force the "id" attribute to be our ID
-	if state.ID != "" {
-		state.Attributes["id"] = state.ID
-	}
-
-	// If the value is the unknown variable value, then it is an error.
-	// In this case we record the error and remove it from the state
-	for ak, av := range state.Attributes {
-		if av == config.UnknownVariableValue {
-			err = multierror.Append(err, fmt.Errorf(
-				"Attribute with unknown value: %s", ak))
-			delete(state.Attributes, ak)
-		}
-	}
-
-	// If the provider produced an InstanceState with an empty id then
-	// that really means that there's no state at all.
-	// FIXME: Change the provider protocol so that the provider itself returns
-	// a null in this case, and stop treating the ID as special.
-	if state.ID == "" {
-		state = nil
-	}
-
-	// Write the final state
-	if n.Output != nil {
-		*n.Output = state
-	}
-
-	// If there are no errors, then we append it to our output error
-	// if we have one, otherwise we just output it.
-	if err != nil {
-		if n.Error != nil {
-			helpfulErr := fmt.Errorf("%s: %s", n.Addr, err.Error())
-			*n.Error = multierror.Append(*n.Error, helpfulErr)
-		} else {
-			return nil, err
-		}
-	}
-
-	return nil, nil
+	*/
 }
 
 // EvalApplyPre is an EvalNode implementation that does the pre-Apply work
 type EvalApplyPre struct {
 	Addr  addrs.ResourceInstance
-	State **InstanceState
-	Diff  **InstanceDiff
+	State **states.ResourceInstanceObject
+	Diff  **plans.ResourceInstanceChange
 }
 
 // TODO: test
@@ -145,7 +136,7 @@ func (n *EvalApplyPre) Eval(ctx EvalContext) (interface{}, error) {
 // EvalApplyPost is an EvalNode implementation that does the post-Apply work
 type EvalApplyPost struct {
 	Addr  addrs.ResourceInstance
-	State **InstanceState
+	State **states.ResourceInstanceObject
 	Error *error
 }
 
@@ -193,7 +184,7 @@ func resourceHasUserVisibleApply(info *InstanceInfo) bool {
 // ApplyProvisioner (single) that is looped over.
 type EvalApplyProvisioners struct {
 	Addr           addrs.ResourceInstance
-	State          **InstanceState
+	State          **states.ResourceInstanceObject
 	ResourceConfig *configs.Resource
 	CreateNew      *bool
 	Error          *error
